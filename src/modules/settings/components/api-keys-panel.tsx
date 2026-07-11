@@ -251,7 +251,7 @@ export function ApiKeysPanel() {
           <DialogHeader>
             <DialogTitle>Create API Key</DialogTitle>
             <DialogDescription>
-              Give your key a descriptive name so you remember what it's for.
+              Give your key a descriptive name so you remember what it&apos;s for.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">

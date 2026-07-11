@@ -9,7 +9,7 @@ import { db } from "@/lib/db";
 import { inngest } from "@/lib/inngest";
 import { loginSchema } from "@/modules/auth/schemas/auth.schema";
 import type { UserRole } from "@prisma/client";
-import { SignJWT, jwtVerify } from "jose";
+import { jwtVerify } from "jose";
 
 const IMPERSONATION_COOKIE = "rr_impersonate";
 

@@ -8,7 +8,7 @@ export function DashboardHeader({ name }: { name: string }) {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Good to see you, {name} 👋</h1>
         <p className="text-muted-foreground mt-1">
-          Here's an overview of your resume performance.
+          Here&apos;s an overview of your resume performance.
         </p>
       </div>
       <div className="flex items-center gap-3">

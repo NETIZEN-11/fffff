@@ -59,7 +59,7 @@
     "jose": "^5.9.6",
     "lucide-react": "^0.454.0",
     "mammoth": "^1.8.0",
-    "next": "15.0.3",
+    "next": "^15.5.20",
     "next-auth": "^5.0.0-beta.25",
     "next-themes": "^0.4.3",
     "openai": "^4.67.3",
@@ -75,7 +75,7 @@
     "stripe": "^17.3.1",
     "tailwind-merge": "^2.5.4",
     "tailwindcss-animate": "^1.0.7",
-    "uuid": "^10.0.0",
+    "uuid": "^14.0.1",
     "zod": "^3.23.8",
     "zod-prisma-types": "^3.1.8"
   },
@@ -93,14 +93,17 @@
     "@vitejs/plugin-react": "^4.3.3",
     "@vitest/coverage-v8": "^2.1.4",
     "eslint": "^8.57.0",
-    "eslint-config-next": "^16.2.10",
+    "eslint-config-next": "15.0.3",
     "jsdom": "^25.0.1",
     "msw": "^2.6.4",
-    "postcss": "^8",
+    "postcss": "^8.5.10",
     "prisma": "^5.22.0",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.19.2",
     "typescript": "^5",
     "vitest": "^2.1.4"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
   }
 }

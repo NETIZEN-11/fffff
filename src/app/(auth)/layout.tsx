@@ -15,7 +15,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="space-y-6">
           <blockquote className="space-y-2">
             <p className="text-lg leading-relaxed">
-              "ResumeRank AI helped me identify exactly what skills were missing. I landed 3 interviews in my first week after optimizing."
+              &ldquo;ResumeRank AI helped me identify exactly what skills were missing. I landed 3 interviews in my first week after optimizing.&rdquo;
             </p>
             <footer className="text-sm text-muted-foreground">
               — Alex Chen, Software Engineer

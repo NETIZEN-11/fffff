@@ -456,7 +456,7 @@ export function TeamPanel() {
           <DialogHeader>
             <DialogTitle>Delete Team?</DialogTitle>
             <DialogDescription>
-              This will permanently delete <strong>"{team.name}"</strong> and remove all{" "}
+              This will permanently delete <strong>&ldquo;{team.name}&rdquo;</strong> and remove all{" "}
               {memberCount} members. This cannot be undone.
             </DialogDescription>
           </DialogHeader>

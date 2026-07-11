@@ -187,7 +187,7 @@ export function ScoreComparison() {
               Step 2 — Select Analyses to Compare
             </CardTitle>
             <CardDescription>
-              Select 2–5 completed analyses. We'll compare scores side by side.
+              Select 2–5 completed analyses. We&apos;ll compare scores side by side.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
