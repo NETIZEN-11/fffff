@@ -30,11 +30,22 @@ jobs:
             echo "⚠️  No DATABASE_URL secret configured, skipping migrations."
             exit 0
           fi
-          # Fall back DIRECT_URL to DATABASE_URL if not set
           export DIRECT_URL="${DIRECT_URL:-$DATABASE_URL}"
           npx prisma migrate deploy
 
+      - name: Check Vercel secrets
+        id: vercel_check
+        run: |
+          if [ -n "${{ secrets.VERCEL_TOKEN }}" ]; then
+            echo "has_vercel=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_vercel=false" >> $GITHUB_OUTPUT
+            echo "⚠️  VERCEL_TOKEN secret not configured. Skipping Vercel deploy."
+            echo "    Add VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID secrets to enable auto-deploy."
+          fi
+
       - name: Deploy to Vercel
+        if: steps.vercel_check.outputs.has_vercel == 'true'
         uses: amondnet/vercel-action@v25
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
