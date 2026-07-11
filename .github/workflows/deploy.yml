@@ -24,8 +24,15 @@ jobs:
       - name: Run migrations
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DIRECT_URL: ${{ secrets.DIRECT_URL || secrets.DATABASE_URL }}
-        run: npx prisma migrate deploy
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "⚠️  No DATABASE_URL secret configured, skipping migrations."
+            exit 0
+          fi
+          # Fall back DIRECT_URL to DATABASE_URL if not set
+          export DIRECT_URL="${DIRECT_URL:-$DATABASE_URL}"
+          npx prisma migrate deploy
 
       - name: Deploy to Vercel
         uses: amondnet/vercel-action@v25
