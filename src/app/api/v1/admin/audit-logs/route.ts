@@ -8,6 +8,7 @@ import {
   unauthorizedResponse,
   forbiddenResponse,
 } from "@/shared/utils/api-response";
+import { parsePagination } from "@/shared/utils/query-params";
 
 function isAdmin(role: string) {
   return role === "ADMIN" || role === "SUPER_ADMIN";
@@ -20,8 +21,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = req.nextUrl;
-    const page = parseInt(searchParams.get("page") ?? "1");
-    const pageSize = parseInt(searchParams.get("pageSize") ?? "50");
+    const { page, pageSize } = parsePagination(searchParams, { pageSize: 50, maxPageSize: 200 });
     const userId = searchParams.get("userId");
     const action = searchParams.get("action");
     const resource = searchParams.get("resource");

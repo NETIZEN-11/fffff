@@ -13,10 +13,13 @@ import { jwtVerify } from "jose";
 
 const IMPERSONATION_COOKIE = "rr_impersonate";
 
-// Secret for signing impersonation tokens - should be in env in production
-const IMPERSONATION_SECRET = new TextEncoder().encode(
-  process.env.IMPERSONATION_SECRET || "default-secret-change-in-production-min-32-chars"
-);
+// Secret for signing impersonation tokens - MUST be set in environment
+if (!process.env.IMPERSONATION_SECRET) {
+  throw new Error(
+    "IMPERSONATION_SECRET environment variable is required. Generate one with: openssl rand -base64 32"
+  );
+}
+const IMPERSONATION_SECRET = new TextEncoder().encode(process.env.IMPERSONATION_SECRET);
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(db),

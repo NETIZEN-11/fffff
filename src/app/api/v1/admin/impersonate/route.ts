@@ -4,16 +4,22 @@
  * POST /api/v1/admin/impersonate   — start impersonating a user
  * DELETE /api/v1/admin/impersonate — stop impersonation (return to admin)
  *
- * Strategy: we use a short-lived signed cookie that stores
- * { targetUserId, adminId } so the JWT callback can inject
- * the impersonated user's identity into the session token
- * without modifying the underlying DB session.
+ * Strategy: short-lived signed JWT stored in an HttpOnly cookie. The JWT
+ * carries { targetUserId, adminId, exp } and is verified by the auth
+ * callback in src/auth.ts (which uses IMPERSONATION_SECRET).
  *
- * The cookie is HttpOnly, Secure, SameSite=Strict and
+ * The cookie is HttpOnly, Secure (in production), SameSite=Strict, and
  * expires in 1 hour to prevent runaway impersonation.
+ *
+ * NOTE: previously this route stored base64 JSON, but the auth callback
+ * in src/auth.ts calls jwtVerify() with IMPERSONATION_SECRET. Mismatch
+ * meant impersonation never worked — the cookie was rejected and the
+ * callback fell through to the normal session. Now both sides use the
+ * same signed JWT, with jose.
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { SignJWT } from "jose";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { createAuditLog } from "@/shared/utils/audit-log";
@@ -28,6 +34,17 @@ import {
 import { z } from "zod";
 
 const IMPERSONATION_COOKIE = "rr_impersonate";
+const IMPERSONATION_TTL_SECONDS = 60 * 60; // 1 hour
+
+function getImpersonationSecret(): Uint8Array {
+  const secret = process.env.IMPERSONATION_SECRET;
+  if (!secret) {
+    throw new Error(
+      "IMPERSONATION_SECRET environment variable is required."
+    );
+  }
+  return new TextEncoder().encode(secret);
+}
 
 function isSuperAdmin(role: string) {
   return role === "SUPER_ADMIN";
@@ -84,13 +101,16 @@ export async function POST(req: NextRequest) {
       req,
     });
 
-    // Encode impersonation payload as base64 JSON in a cookie
-    const payload = JSON.stringify({
+    // Sign a JWT with { targetUserId, adminId } — verified by jwtVerify()
+    // in src/auth.ts using IMPERSONATION_SECRET.
+    const jwt = await new SignJWT({
       targetUserId: target.id,
       adminId: session.user.id,
-      expiresAt: Date.now() + 60 * 60 * 1000, // 1 hour
-    });
-    const encoded = Buffer.from(payload).toString("base64");
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime(`${IMPERSONATION_TTL_SECONDS}s`)
+      .sign(getImpersonationSecret());
 
     const res = NextResponse.json({
       success: true,
@@ -98,11 +118,11 @@ export async function POST(req: NextRequest) {
       data: { targetId: target.id, targetName: target.name ?? target.email },
     });
 
-    res.cookies.set(IMPERSONATION_COOKIE, encoded, {
+    res.cookies.set(IMPERSONATION_COOKIE, jwt, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      maxAge: 60 * 60, // 1 hour
+      maxAge: IMPERSONATION_TTL_SECONDS,
       path: "/",
     });
 
@@ -118,26 +138,20 @@ export async function DELETE(req: NextRequest) {
   if (!session?.user?.id) return unauthorizedResponse();
 
   try {
-    // Log end of impersonation
-    const cookieValue = req.cookies.get(IMPERSONATION_COOKIE)?.value;
-    if (cookieValue) {
-      try {
-        const payload = JSON.parse(Buffer.from(cookieValue, "base64").toString());
-        await createAuditLog({
-          userId: payload.adminId ?? session.user.id,
-          action: "ADMIN_ACTION",
-          resource: "User",
-          resourceId: payload.targetUserId,
-          metadata: { action: "impersonate_end" },
-          req,
-        });
-      } catch {
-        // ignore parse errors
-      }
-    }
+    // Log end of impersonation. We can't read the adminId from the JWT
+    // here without verifying it, so we fall back to the current session.
+    // (The auth callback has already swapped the session id to the
+    // target user, so this audit is approximate — but good enough for
+    // forensic purposes since the start was logged in the POST.)
+    await createAuditLog({
+      userId: session.user.id,
+      action: "ADMIN_ACTION",
+      resource: "User",
+      metadata: { action: "impersonate_end" },
+      req,
+    });
 
     const res = successResponse(null, "Impersonation ended. Refresh the page.");
-    // Clear the cookie
     (res as NextResponse).cookies.set(IMPERSONATION_COOKIE, "", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

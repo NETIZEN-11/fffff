@@ -38,25 +38,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const validated = schema.parse(body);
 
-    // Check subscription limits
-    const subscription = await db.subscription.findUnique({
-      where: { userId: session.user.id },
-    });
-    if (!subscription) return errorResponse("Subscription not found", 404);
-
-    const remaining =
-      subscription.plan === "FREE"
-        ? subscription.analysesLimit - subscription.analysesUsed
-        : Infinity;
-
-    if (remaining < validated.jobDescriptionIds.length) {
-      return errorResponse(
-        `You only have ${remaining} analyses remaining this month. Reduce your selection or upgrade to Pro.`,
-        402
-      );
-    }
-
-    // Verify resume ownership
+    // Verify resume ownership (before opening a transaction so we
+    // don't hold a row lock on a JD list that doesn't belong to us).
     const resume = await db.resume.findFirst({
       where: { id: validated.resumeId, userId: session.user.id, deletedAt: null },
     });
@@ -76,40 +59,96 @@ export async function POST(req: NextRequest) {
       return errorResponse("One or more job descriptions not found or inaccessible", 404);
     }
 
-    // Create all analysis records + fire Inngest events
-    const analyses = await Promise.all(
-      jds.map(async (jd) => {
-        const analysis = await db.resumeAnalysis.create({
-          data: {
-            userId: session.user.id,
-            resumeId: validated.resumeId,
-            jobDescriptionId: jd.id,
-            status: "PENDING",
-            jobTitle: jd.title,
-          },
-        });
-        return analysis;
-      })
-    );
+    // Atomic quota check + N analysis rows in a single transaction. The
+    // conditional update refuses to exceed the FREE plan cap, closing
+    // the TOCTOU race that two concurrent bulk requests would otherwise
+    // share with the single-analysis endpoint.
+    const bulkCount = jds.length;
+    const { analyses } = await db.$transaction(async (tx) => {
+      const sub = await tx.subscription.findUnique({
+        where: { userId: session.user.id },
+        select: { plan: true, analysesUsed: true, analysesLimit: true },
+      });
+      if (!sub) throw new Error("Subscription not found");
 
-    // Increment subscription usage count
-    await db.subscription.update({
-      where: { userId: session.user.id },
-      data: { analysesUsed: { increment: analyses.length } },
-    });
+      const isUnlimited = sub.plan === "PRO" || sub.plan === "TEAM";
+      const fitsFree = sub.analysesUsed + bulkCount <= sub.analysesLimit;
+      if (!isUnlimited && !fitsFree) {
+        const remaining = Math.max(0, sub.analysesLimit - sub.analysesUsed);
+        throw new Error(
+          `INSUFFICIENT_QUOTA:${remaining}`
+        );
+      }
 
-    // Dispatch all Inngest jobs
-    await inngest.send(
-      analyses.map((a) => ({
-        name: "analysis/requested" as const,
-        data: {
-          analysisId: a.id,
+      // Increment quota + create N analysis rows. createMany is one
+      // round-trip instead of N. NOTE: we still need to fetch the
+      // generated IDs (createMany doesn't return them) so we can hand
+      // them to Inngest, so we follow up with a select.
+      await tx.subscription.update({
+        where: { userId: session.user.id },
+        data: { analysesUsed: { increment: bulkCount } },
+      });
+      await tx.resumeAnalysis.createMany({
+        data: jds.map((jd) => ({
           userId: session.user.id,
           resumeId: validated.resumeId,
-          jobDescriptionId: a.jobDescriptionId,
+          jobDescriptionId: jd.id,
+          status: "PENDING" as const,
+          jobTitle: jd.title,
+        })),
+      });
+      const created = await tx.resumeAnalysis.findMany({
+        where: {
+          userId: session.user.id,
+          resumeId: validated.resumeId,
+          status: "PENDING",
+          jobTitle: { in: jds.map((jd) => jd.title) },
         },
-      }))
-    );
+        select: { id: true, jobDescriptionId: true, jobTitle: true },
+        orderBy: { createdAt: "desc" },
+        take: bulkCount,
+      });
+      return { analyses: created };
+    });
+
+    if (analyses.length !== bulkCount) {
+      // Should be impossible if the createMany succeeded, but if the
+      // rows disappear (e.g. another process deletes them) we still
+      // need to refund the quota to avoid double-charging.
+      await db.subscription.update({
+        where: { userId: session.user.id },
+        data: { analysesUsed: { decrement: bulkCount } },
+      });
+      return errorResponse("Failed to create analysis records", 500);
+    }
+
+    // Dispatch all Inngest jobs (after the transaction commits). If
+    // this fails, refund the quota — otherwise the user is charged for
+    // analyses that will never run.
+    try {
+      await inngest.send(
+        analyses.map((a) => ({
+          name: "analysis/requested" as const,
+          data: {
+            analysisId: a.id,
+            userId: session.user.id,
+            resumeId: validated.resumeId,
+            jobDescriptionId: a.jobDescriptionId,
+          },
+        }))
+      );
+    } catch (err) {
+      console.error("[Bulk] inngest.send failed, refunding quota", err);
+      await db.subscription.updateMany({
+        where: { userId: session.user.id, analysesUsed: { gte: bulkCount } },
+        data: { analysesUsed: { decrement: bulkCount } },
+      });
+      // Best-effort cleanup of the PENDING rows we just created
+      await db.resumeAnalysis.deleteMany({
+        where: { id: { in: analyses.map((a) => a.id) } },
+      });
+      return errorResponse("Failed to queue analyses. Please try again.", 503);
+    }
 
     // Single "bulk started" notification
     await db.notification.create({
@@ -142,6 +181,16 @@ export async function POST(req: NextRequest) {
     );
   } catch (error) {
     if (error instanceof ZodError) return validationErrorResponse(error);
+    if (error instanceof Error && error.message.startsWith("INSUFFICIENT_QUOTA:")) {
+      const remaining = error.message.split(":")[1];
+      return errorResponse(
+        `You only have ${remaining} analyses remaining this month. Reduce your selection or upgrade to Pro.`,
+        402
+      );
+    }
+    if (error instanceof Error && error.message === "Subscription not found") {
+      return errorResponse("Subscription not found", 404);
+    }
     return handleApiError(error);
   }
 }

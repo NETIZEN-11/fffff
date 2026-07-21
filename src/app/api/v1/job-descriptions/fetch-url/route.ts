@@ -9,6 +9,7 @@ import {
   errorResponse,
 } from "@/shared/utils/api-response";
 import { rateLimit } from "@/shared/utils/rate-limit";
+import { assertSafeUrl, SSRFBlockedError } from "@/lib/ssrf-guard";
 import { ZodError } from "zod";
 
 const schema = z.object({
@@ -118,6 +119,21 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { url } = schema.parse(body);
 
+    // SSRF guard: block private IPs, loopback, link-local, cloud metadata.
+    // Must run BEFORE fetch() to prevent abuse as a proxy to internal
+    // services and cloud metadata endpoints.
+    try {
+      await assertSafeUrl(url);
+    } catch (err) {
+      if (err instanceof SSRFBlockedError) {
+        return errorResponse("URL is not allowed.", 400);
+      }
+      throw err;
+    }
+
+    // Cap the response body to prevent OOM on bloated pages
+    const MAX_BYTES = 5 * 1024 * 1024; // 5MB
+
     // Fetch the page
     const response = await fetch(url, {
       headers: {
@@ -137,14 +153,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Enforce Content-Length cap if advertised
+    const contentLengthHeader = response.headers.get("content-length");
+    if (contentLengthHeader) {
+      const declared = Number.parseInt(contentLengthHeader, 10);
+      if (Number.isFinite(declared) && declared > MAX_BYTES) {
+        return errorResponse("URL is too large to fetch.", 413);
+      }
+    }
+
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("text/html")) {
       return errorResponse("URL does not point to an HTML page. Please paste the job description manually.", 400);
     }
 
     const html = await response.text();
-
-    // Extract metadata
+    if (html.length > MAX_BYTES) {
+      return errorResponse("URL is too large to fetch.", 413);
+    }
     const ogTitle = getMeta(html, "title");
     const ogDescription = getMeta(html, "description");
     const pageTitle = getTitle(html);

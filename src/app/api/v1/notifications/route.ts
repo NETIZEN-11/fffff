@@ -6,6 +6,7 @@ import {
   handleApiError,
   unauthorizedResponse,
 } from "@/shared/utils/api-response";
+import { parsePagination } from "@/shared/utils/query-params";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -14,8 +15,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl;
     const unreadOnly = searchParams.get("unreadOnly") === "true";
-    const page = parseInt(searchParams.get("page") ?? "1");
-    const pageSize = parseInt(searchParams.get("pageSize") ?? "20");
+    const { page, pageSize } = parsePagination(searchParams, { pageSize: 20, maxPageSize: 50 });
 
     const where = {
       userId: session.user.id,

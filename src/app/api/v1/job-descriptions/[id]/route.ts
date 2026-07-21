@@ -47,16 +47,35 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const body = await req.json();
     const validated = updateJobDescSchema.parse(body);
 
-    const existing = await db.jobDescription.findFirst({
+    // Build the update data with ONLY the fields the client sent.
+    // `undefined` keys must be omitted so PATCHing one field doesn't
+    // null out the others (e.g. `validated.url` is undefined ⇒ don't
+    // touch the existing url).
+    const data: Record<string, unknown> = {};
+    if (validated.title !== undefined) data.title = validated.title;
+    if (validated.company !== undefined) data.company = validated.company;
+    if (validated.description !== undefined) data.description = validated.description;
+    if (validated.url !== undefined) data.url = validated.url || null;
+    if (validated.tags !== undefined) data.tags = validated.tags;
+
+    if (Object.keys(data).length === 0) {
+      // Nothing to update; return the existing record.
+      const existing = await db.jobDescription.findFirst({
+        where: { id, userId: session.user.id, deletedAt: null },
+      });
+      if (!existing) return notFoundResponse("Job description");
+      return successResponse(existing, "No changes to apply");
+    }
+
+    // Ownership check AND update in a single statement so a TOCTOU
+    // race can't slip through.
+    const result = await db.jobDescription.updateMany({
       where: { id, userId: session.user.id, deletedAt: null },
+      data,
     });
-    if (!existing) return notFoundResponse("Job description");
+    if (result.count === 0) return notFoundResponse("Job description");
 
-    const jd = await db.jobDescription.update({
-      where: { id },
-      data: { ...validated, url: validated.url || null },
-    });
-
+    const jd = await db.jobDescription.findUnique({ where: { id } });
     return successResponse(jd, "Job description updated");
   } catch (error) {
     if (error instanceof ZodError) return validationErrorResponse(error);
@@ -70,16 +89,11 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   try {
     const { id } = await params;
-    const existing = await db.jobDescription.findFirst({
+    const result = await db.jobDescription.updateMany({
       where: { id, userId: session.user.id, deletedAt: null },
-    });
-    if (!existing) return notFoundResponse("Job description");
-
-    await db.jobDescription.update({
-      where: { id },
       data: { deletedAt: new Date() },
     });
-
+    if (result.count === 0) return notFoundResponse("Job description");
     return successResponse(null, "Job description deleted");
   } catch (error) {
     return handleApiError(error);

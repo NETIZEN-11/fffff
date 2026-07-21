@@ -1,7 +1,13 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { successResponse, handleApiError, validationErrorResponse } from "@/shared/utils/api-response";
+import {
+  successResponse,
+  handleApiError,
+  validationErrorResponse,
+  errorResponse,
+} from "@/shared/utils/api-response";
+import { rateLimit } from "@/shared/utils/rate-limit";
 import { ZodError } from "zod";
 
 const schema = z.object({
@@ -13,6 +19,13 @@ const schema = z.object({
 // Used by the sign-in form to distinguish "EmailNotVerified" from
 // "wrong password" (NextAuth collapses both into "CredentialsSignin").
 export async function POST(req: NextRequest) {
+  // Without this limit an attacker can probe which emails are
+  // registered and which are unverified, by hammering the endpoint.
+  const limit = await rateLimit(req, { limit: 20, windowMs: 60_000 });
+  if (!limit.success) {
+    return errorResponse("Too many requests. Please try again later.", 429);
+  }
+
   try {
     const body = await req.json();
     const { email } = schema.parse(body);

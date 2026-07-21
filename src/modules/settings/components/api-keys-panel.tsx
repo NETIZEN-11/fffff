@@ -2,16 +2,13 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Key, Plus, Trash2, Copy, Check, Loader2,
-  ShieldCheck, Clock, AlertTriangle,
-} from "lucide-react";
+import { Key, Plus, Trash2, Copy, Eye, EyeOff, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/shared/components/ui/card";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/label";
 import { Badge } from "@/shared/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/shared/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -21,116 +18,38 @@ import {
   DialogDescription,
 } from "@/shared/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/shared/components/ui/select";
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/shared/components/ui/alert-dialog";
 import { apiFetch } from "@/shared/hooks/use-api";
-import { formatDate } from "@/lib/utils";
+import { formatDistanceToNow } from "date-fns";
 
 type ApiKey = {
   id: string;
   name: string;
   prefix: string;
-  permissions: string[];
   lastUsedAt: string | null;
   expiresAt: string | null;
-  createdAt: string;
   isActive: boolean;
-};
-
-type NewKeyResult = {
-  id: string;
-  name: string;
-  prefix: string;
-  key: string;
-  expiresAt: string | null;
   createdAt: string;
 };
-
-const EXPIRY_OPTIONS = [
-  { value: "7d", label: "7 days" },
-  { value: "30d", label: "30 days" },
-  { value: "90d", label: "90 days" },
-  { value: "1y", label: "1 year" },
-  { value: "never", label: "No expiry" },
-];
-
-function isExpired(expiresAt: string | null): boolean {
-  if (!expiresAt) return false;
-  return new Date(expiresAt) < new Date();
-}
-
-function KeyRow({
-  apiKey,
-  onRevoke,
-}: {
-  apiKey: ApiKey;
-  onRevoke: (id: string, name: string) => void;
-}) {
-  const expired = isExpired(apiKey.expiresAt);
-
-  return (
-    <div className="flex items-center justify-between px-4 py-3">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${expired ? "bg-red-500/10" : "bg-primary/10"}`}>
-          <Key className={`h-4 w-4 ${expired ? "text-red-500" : "text-primary"}`} />
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-medium truncate">{apiKey.name}</p>
-            {expired && (
-              <Badge variant="destructive" className="text-xs py-0">Expired</Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-            <code className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded font-mono">
-              {apiKey.prefix}_••••••••
-            </code>
-            {apiKey.expiresAt && !expired && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" />
-                Expires {formatDate(apiKey.expiresAt)}
-              </span>
-            )}
-            {!apiKey.expiresAt && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <ShieldCheck className="h-3 w-3" />
-                No expiry
-              </span>
-            )}
-            {apiKey.lastUsedAt && (
-              <span className="text-xs text-muted-foreground">
-                Last used {formatDate(apiKey.lastUsedAt)}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 shrink-0 hover:text-destructive ml-2"
-        onClick={() => onRevoke(apiKey.id, apiKey.name)}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
-  );
-}
 
 export function ApiKeysPanel() {
   const queryClient = useQueryClient();
-
   const [createOpen, setCreateOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
-  const [expiresIn, setExpiresIn] = useState("never");
-  const [saving, setSaving] = useState(false);
-  const [newKey, setNewKey] = useState<NewKeyResult | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [newKeyData, setNewKeyData] = useState<{ key: string } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [keyToDelete, setKeyToDelete] = useState<ApiKey | null>(null);
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
 
   const { data, isLoading } = useQuery({
     queryKey: ["api-keys"],
@@ -140,44 +59,59 @@ export function ApiKeysPanel() {
   const keys = data?.data ?? [];
 
   async function createKey() {
-    if (!newKeyName.trim()) return;
-    setSaving(true);
+    if (!newKeyName.trim()) {
+      toast.error("Please enter a key name");
+      return;
+    }
+
+    setCreating(true);
     try {
-      const res = await apiFetch<NewKeyResult>("/api/v1/api-keys", {
+      const result = await apiFetch<{ key: string; apiKey: ApiKey }>("/api/v1/api-keys", {
         method: "POST",
-        body: JSON.stringify({ name: newKeyName.trim(), expiresIn }),
+        body: JSON.stringify({ name: newKeyName.trim() }),
       });
-      if (res.data) {
-        setNewKey(res.data);
-        setCreateOpen(false);
-        setNewKeyName("");
-        setExpiresIn("never");
-        queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to create key");
-    } finally {
-      setSaving(false);
-    }
-  }
 
-  async function revokeKey(id: string, name: string) {
-    setRevokingId(id);
-    try {
-      await apiFetch(`/api/v1/api-keys/${id}`, { method: "DELETE" });
-      toast.success(`"${name}" revoked`);
+      setNewKeyData({ key: result.data?.key || "" });
+      setNewKeyName("");
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      toast.success("API key created successfully");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to revoke key");
+      toast.error(e instanceof Error ? e.message : "Failed to create API key");
     } finally {
-      setRevokingId(null);
+      setCreating(false);
     }
   }
 
-  async function copyKey(key: string) {
-    await navigator.clipboard.writeText(key);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  async function deleteKey(key: ApiKey) {
+    setDeletingId(key.id);
+    try {
+      await apiFetch(`/api/v1/api-keys/${key.id}`, { method: "DELETE" });
+      toast.success("API key deleted");
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      setDeleteDialogOpen(false);
+      setKeyToDelete(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to delete API key");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
+    toast.success("Copied to clipboard");
+  }
+
+  function toggleReveal(keyId: string) {
+    setRevealedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(keyId)) {
+        next.delete(keyId);
+      } else {
+        next.add(keyId);
+      }
+      return next;
+    });
   }
 
   return (
@@ -186,193 +120,227 @@ export function ApiKeysPanel() {
         <CardHeader>
           <div className="flex items-start justify-between">
             <div>
-              <div className="flex items-center gap-2">
+              <CardTitle className="flex items-center gap-2">
                 <Key className="h-5 w-5 text-primary" />
-                <CardTitle>API Keys</CardTitle>
-              </div>
-              <CardDescription className="mt-1">
-                Use API keys to authenticate requests from your own tools and scripts.
+                API Keys
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                Use API keys to access ResumeRank AI programmatically via REST API.
               </CardDescription>
             </div>
-            <Button size="sm" onClick={() => setCreateOpen(true)} disabled={keys.length >= 10}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              New Key
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create Key
             </Button>
           </div>
         </CardHeader>
 
-        <CardContent className="space-y-4">
-          {/* Warning about key security */}
-          <div className="flex items-start gap-2 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3">
-            <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
-            <p className="text-xs text-muted-foreground">
-              API keys grant full access to your account. Keep them secret — treat them like passwords.
-              Never commit them to source control.
-            </p>
-          </div>
-
+        <CardContent>
           {isLoading ? (
             <div className="flex justify-center py-8">
               <Loader2 className="h-5 w-5 animate-spin" />
             </div>
           ) : keys.length === 0 ? (
-            <div className="rounded-xl border border-dashed p-8 text-center space-y-2">
-              <Key className="h-8 w-8 text-muted-foreground/40 mx-auto" />
+            <div className="text-center py-12 border rounded-xl border-dashed">
+              <Key className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
               <p className="text-sm text-muted-foreground">
                 No API keys yet. Create one to get started.
               </p>
             </div>
           ) : (
-            <div className="rounded-xl border overflow-hidden divide-y">
-              {keys.map((key) => (
-                <div key={key.id} className="relative">
-                  {revokingId === key.id && (
-                    <div className="absolute inset-0 bg-background/60 flex items-center justify-center z-10">
-                      <Loader2 className="h-4 w-4 animate-spin" />
+            <div className="space-y-3">
+              {keys.map((key) => {
+                const isRevealed = revealedKeys.has(key.id);
+                const isExpired = key.expiresAt && new Date(key.expiresAt) < new Date();
+
+                return (
+                  <div
+                    key={key.id}
+                    className="flex items-center justify-between p-4 border rounded-lg"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="text-sm font-medium">{key.name}</p>
+                        {!key.isActive && (
+                          <Badge variant="outline" className="text-xs">
+                            Inactive
+                          </Badge>
+                        )}
+                        {isExpired && (
+                          <Badge variant="destructive" className="text-xs">
+                            Expired
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-mono text-muted-foreground">
+                          {isRevealed ? `${key.prefix}••••••••••••••••••••` : `${key.prefix}••••`}
+                        </p>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Created {formatDistanceToNow(new Date(key.createdAt), { addSuffix: true })}
+                        {key.lastUsedAt && (
+                          <> · Last used {formatDistanceToNow(new Date(key.lastUsedAt), { addSuffix: true })}</>
+                        )}
+                      </p>
                     </div>
-                  )}
-                  <KeyRow apiKey={key} onRevoke={revokeKey} />
-                </div>
-              ))}
+
+                    <div className="flex items-center gap-2 ml-4">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => toggleReveal(key.id)}
+                      >
+                        {isRevealed ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:text-destructive"
+                        onClick={() => {
+                          setKeyToDelete(key);
+                          setDeleteDialogOpen(true);
+                        }}
+                        disabled={deletingId === key.id}
+                      >
+                        {deletingId === key.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
-          {keys.length >= 10 && (
-            <p className="text-xs text-muted-foreground text-center">
-              Maximum of 10 active API keys reached. Revoke some to create new ones.
-            </p>
-          )}
+          <div className="mt-6 p-4 bg-muted/50 rounded-lg">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p className="font-medium text-foreground">Security best practices:</p>
+                <ul className="list-disc list-inside space-y-0.5 ml-2">
+                  <li>Store API keys securely and never commit them to version control</li>
+                  <li>Rotate keys regularly and delete unused keys</li>
+                  <li>Use separate keys for development and production</li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
-      {/* Create Key Dialog */}
+      {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create API Key</DialogTitle>
             <DialogDescription>
-              Give your key a descriptive name so you remember what it&apos;s for.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="key-name">Key Name</Label>
-              <Input
-                id="key-name"
-                placeholder='e.g. "CI Pipeline" or "Personal Script"'
-                value={newKeyName}
-                onChange={(e) => setNewKeyName(e.target.value)}
-                autoFocus
-                onKeyDown={(e) => e.key === "Enter" && createKey()}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="key-expiry">Expiry</Label>
-              <Select value={expiresIn} onValueChange={setExpiresIn}>
-                <SelectTrigger id="key-expiry">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {EXPIRY_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={createKey} disabled={saving || !newKeyName.trim()}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create Key"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* New Key Reveal Dialog — shown ONCE after creation */}
-      <Dialog
-        open={!!newKey}
-        onOpenChange={(open) => {
-          if (!open) setNewKey(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-green-500" />
-              API Key Created
-            </DialogTitle>
-            <DialogDescription>
-              Copy your key now. For security, it will{" "}
-              <strong>not be shown again</strong> after you close this dialog.
+              Give your API key a descriptive name to help you identify it later.
             </DialogDescription>
           </DialogHeader>
 
-          {newKey && (
-            <div className="space-y-4 py-2">
-              <div className="space-y-1.5">
+          {newKeyData ? (
+            <div className="space-y-4 py-4">
+              <div className="p-4 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-900 rounded-lg">
+                <div className="flex items-start gap-2 mb-3">
+                  <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+                  <p className="text-sm font-medium text-yellow-900 dark:text-yellow-200">
+                    Save your API key now!
+                  </p>
+                </div>
+                <p className="text-xs text-yellow-800 dark:text-yellow-300">
+                  You won't be able to see this key again. Store it somewhere safe.
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <Label>Your API Key</Label>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded-lg border bg-muted px-3 py-2.5 text-xs font-mono break-all select-all">
-                    {newKey.key}
-                  </code>
+                  <Input
+                    readOnly
+                    value={newKeyData.key}
+                    className="font-mono text-xs"
+                  />
                   <Button
-                    size="icon"
                     variant="outline"
-                    className="shrink-0"
-                    onClick={() => copyKey(newKey.key)}
+                    size="icon"
+                    onClick={() => copyToClipboard(newKeyData.key)}
                   >
-                    {copied ? (
-                      <Check className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
+                    <Copy className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
-
-              <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3">
-                <p className="text-xs text-muted-foreground">
-                  <strong>Store this key securely.</strong> Once you close this dialog,
-                  you will not be able to see it again. If you lose it, you will need to
-                  create a new key.
-                </p>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="key-name">Key Name</Label>
+                <Input
+                  id="key-name"
+                  placeholder="e.g. Production API Key"
+                  value={newKeyName}
+                  onChange={(e) => setNewKeyName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && createKey()}
+                  autoFocus
+                />
               </div>
-
-              {newKey.expiresAt && (
-                <p className="text-xs text-muted-foreground">
-                  This key expires on{" "}
-                  <strong>{formatDate(newKey.expiresAt)}</strong>.
-                </p>
-              )}
             </div>
           )}
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => newKey && copyKey(newKey.key)}
-            >
-              {copied ? (
-                <>
-                  <Check className="h-4 w-4 mr-1.5 text-green-500" />
-                  Copied!
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4 mr-1.5" />
-                  Copy Key
-                </>
-              )}
-            </Button>
-            <Button onClick={() => setNewKey(null)}>Done</Button>
+            {newKeyData ? (
+              <Button
+                onClick={() => {
+                  setNewKeyData(null);
+                  setCreateOpen(false);
+                }}
+              >
+                Done
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setCreateOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={createKey} disabled={creating || !newKeyName.trim()}>
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create Key"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete API Key?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "<strong>{keyToDelete?.name}</strong>"? Any
+              applications using this key will lose access immediately. This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => keyToDelete && deleteKey(keyToDelete)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete Key
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

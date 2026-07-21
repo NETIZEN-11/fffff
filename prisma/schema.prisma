@@ -102,6 +102,7 @@ model User {
   resumes          Resume[]
   jobDescriptions  JobDescription[]
   analyses         ResumeAnalysis[]
+  coverLetters     CoverLetter[]
   notifications    Notification[]
   subscription     Subscription?
   payments         Payment[]
@@ -199,6 +200,10 @@ model Resume {
   version     Int       @default(1)
   isActive    Boolean   @default(true)
   tags        String[]  @default([])
+  // Cached extracted text so re-analyses don't re-download + re-parse the
+  // PDF/DOCX. Populated lazily on first analysis.
+  extractedText String?  @db.Text
+  extractedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
@@ -206,6 +211,7 @@ model Resume {
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   files     ResumeFile[]
   analyses  ResumeAnalysis[]
+  coverLetters CoverLetter[]
 
   @@index([userId])
   @@index([userId, isActive])
@@ -249,6 +255,7 @@ model JobDescription {
 
   user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   analyses ResumeAnalysis[]
+  coverLetters CoverLetter[]
 
   @@index([userId])
   @@index([createdAt])
@@ -399,6 +406,33 @@ model CareerRecommendation {
   @@map("career_recommendations")
 }
 
+// Persisted cover letter output. Previously the cover letter was
+// returned to the client but never saved — refreshing the page lost
+// the result. Now we store it so users can revisit and re-generate.
+model CoverLetter {
+  id               String   @id @default(cuid())
+  userId           String
+  resumeId         String
+  jobDescriptionId String
+  tone             String   // professional | enthusiastic | concise
+  customNote       String?  @db.Text
+  body             String   @db.Text
+  wordCount        Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume         Resume         @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  jobDescription JobDescription @relation(fields: [jobDescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([resumeId])
+  @@index([jobDescriptionId])
+  @@map("cover_letters")
+}
+
 // ============================================================
 // NOTIFICATIONS
 // ============================================================
@@ -440,6 +474,8 @@ model Subscription {
   trialEnd             DateTime?
   analysesUsed         Int                @default(0)
   analysesLimit        Int                @default(3)
+  coverLettersUsed     Int                @default(0)
+  coverLettersLimit    Int                @default(3)
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
@@ -604,12 +640,31 @@ model WebhookDelivery {
   success      Boolean  @default(false)
   attemptedAt  DateTime @default(now())
   duration     Int?     // ms
+  retryCount   Int      @default(0)
+  nextRetryAt  DateTime?
 
   webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 
   @@index([webhookId])
   @@index([attemptedAt])
+  @@index([nextRetryAt])
   @@map("webhook_deliveries")
+}
+
+// Idempotency log for inbound Stripe webhooks. Stripe may send the same
+// event more than once (e.g. on retry after our 5xx); we record the
+// event id and short-circuit duplicates on the second delivery.
+model StripeEvent {
+  id          String   @id // Stripe event.id (e.g. "evt_...")
+  type        String
+  receivedAt  DateTime @default(now())
+  processedAt DateTime?
+  status      String   @default("pending") // pending | processed | failed
+  error       String?  @db.Text
+
+  @@index([type])
+  @@index([receivedAt])
+  @@map("stripe_events")
 }
 
 // ============================================================

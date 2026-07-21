@@ -24,6 +24,8 @@ export type RateLimitResult = {
   success: boolean;
   remaining: number;
   resetAt: number;
+  limit: number;
+  reset: number; // Unix timestamp in seconds
 };
 
 // ─── Key builder ─────────────────────────────────────────────────────────────
@@ -59,11 +61,23 @@ function memRateLimit(key: string, config: RateLimitConfig): RateLimitResult {
   if (!entry || now > entry.resetAt) {
     const resetAt = now + config.windowMs;
     memStore.set(key, { count: 1, resetAt });
-    return { success: true, remaining: config.limit - 1, resetAt };
+    return {
+      success: true,
+      remaining: config.limit - 1,
+      resetAt,
+      limit: config.limit,
+      reset: Math.ceil(resetAt / 1000),
+    };
   }
 
   if (entry.count >= config.limit) {
-    return { success: false, remaining: 0, resetAt: entry.resetAt };
+    return {
+      success: false,
+      remaining: 0,
+      resetAt: entry.resetAt,
+      limit: config.limit,
+      reset: Math.ceil(entry.resetAt / 1000),
+    };
   }
 
   entry.count += 1;
@@ -71,6 +85,8 @@ function memRateLimit(key: string, config: RateLimitConfig): RateLimitResult {
     success: true,
     remaining: config.limit - entry.count,
     resetAt: entry.resetAt,
+    limit: config.limit,
+    reset: Math.ceil(entry.resetAt / 1000),
   };
 }
 
@@ -114,15 +130,24 @@ async function redisRateLimit(
     ];
 
     const count = results[0]?.result ?? 1;
+    const reset = Math.ceil(resetAt / 1000);
 
     if (count > config.limit) {
-      return { success: false, remaining: 0, resetAt };
+      return {
+        success: false,
+        remaining: 0,
+        resetAt,
+        limit: config.limit,
+        reset,
+      };
     }
 
     return {
       success: true,
       remaining: Math.max(0, config.limit - count),
       resetAt,
+      limit: config.limit,
+      reset,
     };
   } catch {
     // Network/parse error — degrade gracefully to in-memory
@@ -133,6 +158,31 @@ async function redisRateLimit(
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
+ * Injects rate limit headers into a Response object
+ * Headers follow standard RateLimit Header Fields for HTTP (IETF draft)
+ *
+ * @param response - Response object to add headers to
+ * @param result - Rate limit result
+ * @returns Response with rate limit headers
+ */
+export function addRateLimitHeaders(
+  response: Response,
+  result: RateLimitResult
+): Response {
+  response.headers.set("X-RateLimit-Limit", result.limit.toString());
+  response.headers.set("X-RateLimit-Remaining", result.remaining.toString());
+  response.headers.set("X-RateLimit-Reset", result.reset.toString());
+  
+  // Add Retry-After header if rate limited
+  if (!result.success) {
+    const retryAfter = Math.max(0, result.reset - Math.floor(Date.now() / 1000));
+    response.headers.set("Retry-After", retryAfter.toString());
+  }
+
+  return response;
+}
+
+/**
  * Rate limit a Next.js API request.
  *
  * Uses Upstash Redis when UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
@@ -140,7 +190,10 @@ async function redisRateLimit(
  *
  * @example
  * const limit = await rateLimit(req, { limit: 10, windowMs: 60_000 });
- * if (!limit.success) return errorResponse("Too many requests", 429);
+ * if (!limit.success) {
+ *   const response = errorResponse("Too many requests", 429);
+ *   return addRateLimitHeaders(response, limit);
+ * }
  */
 export async function rateLimit(
   req: NextRequest,

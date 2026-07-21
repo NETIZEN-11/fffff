@@ -68,7 +68,10 @@ function SignInFormInner() {
     });
 
     if (result?.error) {
-      // Fallback: re-check in case the pre-check missed it (race condition etc.)
+      // NextAuth surfaces most credential failures as the generic
+      // "CredentialsSignin" code. The most common cause for a brand
+      // new account is "EmailNotVerified" — re-check via the
+      // dedicated endpoint and offer a resend.
       if (result.error === "CredentialsSignin") {
         try {
           const res = await fetch("/api/v1/auth/check-verification", {
@@ -81,8 +84,22 @@ function SignInFormInner() {
             setUnverifiedEmail(values.email);
             return;
           }
-        } catch {
-          // ignore
+        } catch (err) {
+          // If the check itself errored, surface that to the user —
+          // a 503 means the database is unreachable and the user
+          // needs to know that "Invalid email or password" is a lie.
+          if (
+            err instanceof Error &&
+            err.message.toLowerCase().includes("database unavailable")
+          ) {
+            toast.error(
+              `Sign-in is unavailable: ${err.message} ` +
+                "If you're running locally, start Postgres or update DATABASE_URL in .env. " +
+                "Run `npm run db:check` to verify the connection.",
+              { duration: 15000 }
+            );
+            return;
+          }
         }
       }
       toast.error("Invalid email or password");

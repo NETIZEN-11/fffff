@@ -67,17 +67,6 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.id) return unauthorizedResponse();
 
   try {
-    // Enforce max keys limit
-    const count = await db.apiKey.count({
-      where: { userId: session.user.id, isActive: true },
-    });
-    if (count >= MAX_API_KEYS) {
-      return errorResponse(
-        `You can have at most ${MAX_API_KEYS} active API keys. Revoke some to create new ones.`,
-        400
-      );
-    }
-
     const body = await req.json();
     const validated = createKeySchema.parse(body);
 
@@ -90,15 +79,27 @@ export async function POST(req: NextRequest) {
     const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
     const expiresAt = computeExpiry(validated.expiresIn);
 
-    const apiKey = await db.apiKey.create({
-      data: {
-        userId: session.user.id,
-        name: validated.name,
-        keyHash,
-        prefix,
-        expiresAt,
-        isActive: true,
-      },
+    // Atomic create: enforce the cap inside the same statement using
+    // a count-based guard wrapped in an interactive transaction. This
+    // closes the race where two parallel requests both pass the
+    // pre-check and both create an 11th key.
+    const apiKey = await db.$transaction(async (tx) => {
+      const activeCount = await tx.apiKey.count({
+        where: { userId: session.user.id, isActive: true },
+      });
+      if (activeCount >= MAX_API_KEYS) {
+        throw new Error("KEY_LIMIT_EXCEEDED");
+      }
+      return tx.apiKey.create({
+        data: {
+          userId: session.user.id,
+          name: validated.name,
+          keyHash,
+          prefix,
+          expiresAt,
+          isActive: true,
+        },
+      });
     });
 
     // Return the raw key ONCE — it will never be shown again
@@ -117,6 +118,12 @@ export async function POST(req: NextRequest) {
     );
   } catch (error) {
     if (error instanceof ZodError) return validationErrorResponse(error);
+    if (error instanceof Error && error.message === "KEY_LIMIT_EXCEEDED") {
+      return errorResponse(
+        `You can have at most ${MAX_API_KEYS} active API keys. Revoke some to create new ones.`,
+        400
+      );
+    }
     return handleApiError(error);
   }
 }

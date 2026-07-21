@@ -2,13 +2,22 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { ApiResponse } from "@/types";
 
-// Generic fetch helper with typed response
+// Generic fetch helper with typed response. The X-Requested-With
+// header is the simplest CSRF defence on top of the session cookie:
+// browsers will not let a cross-origin <form> POST set custom
+// headers, so any request that *does* include this header is
+// either same-origin or has been CORS-preflighted. The middleware
+// rejects state-changing API requests that don't carry it.
 async function apiFetch<T>(
   url: string,
   options?: RequestInit
 ): Promise<ApiResponse<T>> {
   const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+      ...options?.headers,
+    },
     ...options,
   });
 

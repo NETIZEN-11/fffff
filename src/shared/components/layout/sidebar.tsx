@@ -18,6 +18,9 @@ import {
   Layers,
   ChevronLeft,
   ChevronRight,
+  Users2,
+  Gift,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/shared/components/ui/button";
@@ -33,6 +36,9 @@ const NAV_ITEMS = [
   { href: "/cover-letter", label: "Cover Letter", icon: PenLine },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/history", label: "History", icon: History },
+  { href: "/teams", label: "Teams", icon: Users2 },
+  { href: "/referrals", label: "Referrals", icon: Gift },
+  { href: "/settings/api-keys", label: "API Keys", icon: KeyRound },
   { href: "/billing", label: "Billing", icon: CreditCard },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

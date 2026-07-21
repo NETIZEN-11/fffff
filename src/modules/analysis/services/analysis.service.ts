@@ -26,8 +26,7 @@ export type AnalysisListParams = {
 
 export class AnalysisService {
   async createAnalysis(input: CreateAnalysisInput) {
-    await this.assertUsageAllowed(input.userId);
-
+    // 1. Verify resume + JD ownership in parallel
     const [resume, jobDescription] = await Promise.all([
       db.resume.findFirst({
         where: { id: input.resumeId, userId: input.userId, deletedAt: null },
@@ -40,40 +39,84 @@ export class AnalysisService {
     if (!resume) throw new Error("Resume not found");
     if (!jobDescription) throw new Error("Job description not found");
 
-    const analysis = await db.resumeAnalysis.create({
-      data: {
-        userId: input.userId,
-        resumeId: input.resumeId,
-        jobDescriptionId: input.jobDescriptionId,
-        status: "PENDING",
-        jobTitle: jobDescription.title,
-        company: jobDescription.company,
-      },
+    // 2. Atomic: create analysis + conditionally increment quota in a
+    //    single transaction. The conditional update refuses to exceed
+    //    the limit, closing the TOCTOU race that allowed two concurrent
+    //    requests to both pass the check.
+    const analysis = await db.$transaction(async (tx) => {
+      // Conditional quota increment. If this returns count: 0, the user
+      // is at their limit and we abort the transaction.
+      const updatedSub = await tx.subscription.updateMany({
+        where: {
+          userId: input.userId,
+          OR: [
+            { plan: { in: ["PRO", "TEAM"] } }, // unlimited plans
+            { plan: "FREE", analysesUsed: { lt: 3 } }, // free plan cap (default limit = 3)
+          ],
+        },
+        data: { analysesUsed: { increment: 1 } },
+      });
+
+      if (updatedSub.count === 0) {
+        throw new Error(
+          "You have reached your monthly analysis limit. Please upgrade to Pro for unlimited analyses."
+        );
+      }
+
+      return tx.resumeAnalysis.create({
+        data: {
+          userId: input.userId,
+          resumeId: input.resumeId,
+          jobDescriptionId: input.jobDescriptionId,
+          status: "PENDING",
+          jobTitle: jobDescription.title,
+          company: jobDescription.company,
+        },
+      });
     });
 
-    await db.subscription.update({
-      where: { userId: input.userId },
-      data: { analysesUsed: { increment: 1 } },
-    });
-
-    await inngest.send({
-      name: "analysis/requested",
-      data: {
-        analysisId: analysis.id,
-        userId: input.userId,
-        resumeId: input.resumeId,
-        jobDescriptionId: input.jobDescriptionId,
-      },
-    });
+    // 3. Fire the Inngest event AFTER the transaction commits. If the
+    //    send fails, we have a row in PENDING with quota charged but
+    //    no worker pickup. A nightly reaper (future work) can re-queue
+    //    stuck PENDING rows older than 10 minutes.
+    try {
+      await inngest.send({
+        name: "analysis/requested",
+        data: {
+          analysisId: analysis.id,
+          userId: input.userId,
+          resumeId: input.resumeId,
+          jobDescriptionId: input.jobDescriptionId,
+        },
+      });
+    } catch (err) {
+      // Compensating action: refund the quota. The analysis row stays
+      // as PENDING and will be cleaned up by the reaper.
+      console.error("Failed to enqueue analysis/requested, refunding quota", err);
+      await db.subscription.updateMany({
+        where: { userId: input.userId, analysesUsed: { gt: 0 } },
+        data: { analysesUsed: { decrement: 1 } },
+      });
+      throw new Error("Failed to queue analysis. Please try again.");
+    }
 
     return analysis;
   }
 
   async processAnalysis(analysisId: string): Promise<void> {
-    await db.resumeAnalysis.update({
-      where: { id: analysisId },
+    // Idempotency guard: claim the analysis by transitioning
+    // PENDING → PROCESSING. If a concurrent worker already grabbed it,
+    // this returns count: 0 and we bail. This prevents double-AI-runs
+    // on Inngest retries.
+    const claimed = await db.resumeAnalysis.updateMany({
+      where: { id: analysisId, status: "PENDING", deletedAt: null },
       data: { status: "PROCESSING" },
     });
+    if (claimed.count === 0) {
+      // Either already claimed by another worker, or not in PENDING.
+      // Bail silently — Inngest will mark the step complete.
+      return;
+    }
 
     const startTime = Date.now();
 
@@ -85,7 +128,8 @@ export class AnalysisService {
 
       if (!analysis) throw new Error("Analysis not found");
 
-      const resumeText = await textExtractorService.extractFromUrl(
+      const resumeText = await textExtractorService.getOrExtract(
+        analysis.resume.id,
         analysis.resume.fileUrl,
         analysis.resume.fileType
       );
@@ -102,14 +146,46 @@ export class AnalysisService {
       await this.notifyAnalysisComplete(analysis.userId, analysisId, result.atsScore);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Analysis failed";
-      await db.resumeAnalysis.update({
+
+      // Get the analysis to find the userId for refund
+      const analysis = await db.resumeAnalysis.findUnique({
         where: { id: analysisId },
-        data: {
-          status: "FAILED",
-          error: errorMessage,
-          processingTime: Date.now() - startTime,
-        },
+        select: { userId: true },
       });
+
+      // Mark FAILED and refund quota in one transaction. The
+      // conditional decrement prevents the count from going negative
+      // if the quota was already refunded by another path.
+      await db.$transaction(async (tx) => {
+        await tx.resumeAnalysis.update({
+          where: { id: analysisId },
+          data: {
+            status: "FAILED",
+            error: errorMessage,
+            processingTime: Date.now() - startTime,
+          },
+        });
+
+        if (analysis?.userId) {
+          await tx.subscription.updateMany({
+            where: { userId: analysis.userId, analysesUsed: { gt: 0 } },
+            data: { analysesUsed: { decrement: 1 } },
+          });
+        }
+      });
+
+      if (analysis?.userId) {
+        await db.notification.create({
+          data: {
+            userId: analysis.userId,
+            type: "ANALYSIS_FAILED",
+            title: "Analysis Failed",
+            message: `Your resume analysis failed: ${errorMessage}. Your analysis quota has been refunded.`,
+            metadata: { analysisId, error: errorMessage },
+          },
+        });
+      }
+
       throw error;
     }
   }
@@ -273,14 +349,6 @@ export class AnalysisService {
     const analysis = await db.resumeAnalysis.findFirst({ where: { id, userId, deletedAt: null } });
     if (!analysis) throw new Error("Analysis not found");
     await db.resumeAnalysis.update({ where: { id }, data: { deletedAt: new Date() } });
-  }
-
-  private async assertUsageAllowed(userId: string): Promise<void> {
-    const subscription = await db.subscription.findUnique({ where: { userId } });
-    if (!subscription) throw new Error("Subscription not found");
-    if (subscription.plan === "FREE" && subscription.analysesUsed >= subscription.analysesLimit) {
-      throw new Error("You have reached your monthly analysis limit. Please upgrade to Pro for unlimited analyses.");
-    }
   }
 
   private async notifyAnalysisComplete(userId: string, analysisId: string, atsScore: number): Promise<void> {

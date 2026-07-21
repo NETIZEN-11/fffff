@@ -8,6 +8,7 @@ import {
   unauthorizedResponse,
   validationErrorResponse,
 } from "@/shared/utils/api-response";
+import { parsePagination } from "@/shared/utils/query-params";
 import { ZodError } from "zod";
 
 const createJobDescSchema = z.object({
@@ -24,8 +25,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const { searchParams } = req.nextUrl;
-    const page = parseInt(searchParams.get("page") ?? "1");
-    const pageSize = parseInt(searchParams.get("pageSize") ?? "10");
+    const { page, pageSize } = parsePagination(searchParams, { pageSize: 10, maxPageSize: 50 });
     const search = searchParams.get("search");
 
     const where = {

@@ -65,7 +65,23 @@ export function handleApiError(error: unknown): NextResponse<ApiResponse> {
       msg.includes("P1003") || // Prisma: database does not exist
       msg.includes("P2024")    // Prisma: connection pool timeout
     ) {
-      return errorResponse("Database unavailable. Please try again shortly.", 503);
+      // Surface the configured DB host (without password) so the user
+      // can see WHICH database was unreachable — "localhost:5433" vs
+      // "localhost:5432" is a 30-second fix once they know.
+      let dbHint = "the database";
+      try {
+        const dbUrl = process.env.DATABASE_URL;
+        if (dbUrl) {
+          const u = new URL(dbUrl);
+          dbHint = `${u.hostname}:${u.port || "5432"}`;
+        }
+      } catch {
+        // ignore
+      }
+      return errorResponse(
+        `Database unavailable (${dbHint}). Please try again shortly.`,
+        503
+      );
     }
 
     // Map known app-level errors to status codes

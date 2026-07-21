@@ -50,7 +50,21 @@ export async function POST(req: NextRequest) {
       events: validated.events as WebhookEvent[],
     });
 
-    return successResponse(hook, "Webhook created", undefined, 201);
+    // The plaintext `secret` is returned ONCE here. The DB stores only
+    // its SHA-256 hash; we cannot recover the plaintext later.
+    return successResponse(
+      {
+        id: hook.id,
+        name: hook.name,
+        url: hook.url,
+        events: hook.events,
+        secret: hook.secret,
+        createdAt: hook.createdAt,
+      },
+      "Webhook created. Copy the secret now — it will not be shown again.",
+      undefined,
+      201
+    );
   } catch (error) {
     if (error instanceof ZodError) return validationErrorResponse(error);
     return handleApiError(error);

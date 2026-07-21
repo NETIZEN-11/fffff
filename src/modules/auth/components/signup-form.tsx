@@ -66,7 +66,23 @@ function SignUpFormInner() {
       );
       router.push(`/auth/signin?registered=true`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Registration failed");
+      const message = e instanceof Error ? e.message : "Registration failed";
+      // 503 from handleApiError = database unreachable. The default
+      // message is "Database unavailable (host:port). Please try
+      // again shortly." which doesn't tell the user how to fix it.
+      // If we detect that, show setup hints so the user can resolve
+      // it without grepping the codebase.
+      if (message.toLowerCase().includes("database unavailable")) {
+        toast.error(
+          `Sign-up is unavailable: ${message} ` +
+            "If you're running locally, start Postgres (e.g. `docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16`) " +
+            "or update DATABASE_URL in .env to a working database. " +
+            "Run `npm run db:check` to verify the connection.",
+          { duration: 15000 }
+        );
+      } else {
+        toast.error(message);
+      }
     }
   }
 

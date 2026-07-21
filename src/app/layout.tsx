@@ -6,6 +6,9 @@ import { Providers } from "@/shared/providers/providers";
 import { Toaster } from "@/shared/components/ui/toaster";
 import { APP_NAME, APP_DESCRIPTION, APP_URL } from "@/constants";
 
+// Validate environment variables at application startup
+import "@/lib/validate-env";
+
 export const metadata: Metadata = {
   title: {
     default: APP_NAME,

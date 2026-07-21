@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, FileText, Target, ArrowRight, Check } from "lucide-react";
+import { Sparkles, FileText, Target, ArrowRight, ArrowLeft, Check } from "lucide-react";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/label";
@@ -35,8 +35,10 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(0);
   const [jobTitle, setJobTitle] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   async function handleNext() {
+    setSaveError(null);
     if (step === 1 && jobTitle) {
       setSaving(true);
       try {
@@ -44,8 +46,15 @@ export default function OnboardingPage() {
           method: "PATCH",
           body: JSON.stringify({ jobTitle }),
         });
-      } catch {
-        // non-blocking — continue regardless
+      } catch (err) {
+        // Non-blocking — but show the user the save didn't stick so
+        // they can try again. The previous version silently swallowed
+        // the error and let the user believe the title was saved.
+        const message =
+          err instanceof Error ? err.message : "Couldn't save your title right now.";
+        setSaveError(message);
+        setSaving(false);
+        return;
       }
       setSaving(false);
     }
@@ -56,6 +65,11 @@ export default function OnboardingPage() {
     }
 
     setStep((s) => s + 1);
+  }
+
+  function handleBack() {
+    setSaveError(null);
+    setStep((s) => Math.max(0, s - 1));
   }
 
   const current = STEPS[step];
@@ -136,14 +150,34 @@ export default function OnboardingPage() {
               )}
             </Button>
 
-            {step < STEPS.length - 1 && (
-              <button
-                onClick={() => router.push("/dashboard")}
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Skip for now
-              </button>
+            {saveError && (
+              <p className="text-xs text-destructive" role="alert">
+                {saveError} You can try again or continue without saving.
+              </p>
             )}
+
+            <div className="flex items-center justify-between">
+              {step > 0 ? (
+                <button
+                  onClick={handleBack}
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                  Back
+                </button>
+              ) : (
+                <span />
+              )}
+
+              {step < STEPS.length - 1 && (
+                <button
+                  onClick={() => router.push("/dashboard")}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Skip for now
+                </button>
+              )}
+            </div>
           </motion.div>
         </AnimatePresence>
       </div>

@@ -7,7 +7,9 @@ import {
   validationErrorResponse,
   errorResponse,
 } from "@/shared/utils/api-response";
-import { rateLimit } from "@/shared/utils/rate-limit";
+import { rateLimit, addRateLimitHeaders } from "@/shared/utils/rate-limit";
+import { getRequestIdFromReq } from "@/shared/utils/request-id";
+import { loggerWithRequestId } from "@/lib/logger";
 import { ZodError } from "zod";
 
 const resetPasswordSchema = z.object({
@@ -23,25 +25,39 @@ const resetPasswordSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestIdFromReq(req);
+  const log = loggerWithRequestId(requestId);
+  
   // Rate limit: 5 attempts per minute per IP
   const limit = await rateLimit(req, { limit: 5, windowMs: 60_000 });
   if (!limit.success) {
-    return errorResponse("Too many attempts. Please try again later.", 429);
+    log.warn("Rate limit exceeded for password reset");
+    const response = errorResponse("Too many attempts. Please try again later.", 429);
+    return addRateLimitHeaders(response, limit);
   }
 
   try {
     const body = await req.json();
     const validated = resetPasswordSchema.parse(body);
 
+    log.info({ email: validated.email }, "Processing password reset");
+    
     await authService.resetPassword(
       validated.email,
       validated.token,
       validated.password
     );
 
-    return successResponse(null, "Password reset successfully. You can now sign in.");
+    log.info({ email: validated.email }, "Password reset successful");
+    const response = successResponse(null, "Password reset successfully. You can now sign in.");
+    return addRateLimitHeaders(response, limit);
   } catch (error) {
-    if (error instanceof ZodError) return validationErrorResponse(error);
-    return handleApiError(error);
+    log.error({ error }, "Password reset error");
+    if (error instanceof ZodError) {
+      const response = validationErrorResponse(error);
+      return addRateLimitHeaders(response, limit);
+    }
+    const response = handleApiError(error);
+    return addRateLimitHeaders(response, limit);
   }
 }
