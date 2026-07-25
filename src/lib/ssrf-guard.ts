@@ -57,7 +57,7 @@ function isBlockedIPv4(ip: string): boolean {
 function isBlockedIPv6(ip: string): boolean {
   // Normalize: lowercase, strip zone id.
   const lower = ip.toLowerCase().split("%")[0]!;
-  if (lower === "::" || lower === "::1") return true; // any/loopback
+  if (lower === "::" || lower === "::1" || lower === "0:0:0:0:0:0:0:1" || lower === "0:0:0:0:0:0:0:0") return true; // any/loopback
   // Link-local fe80::/10
   if (
     lower.startsWith("fe8") || lower.startsWith("fe9") ||
@@ -65,9 +65,24 @@ function isBlockedIPv6(ip: string): boolean {
   ) return true;
   // Unique local fc00::/7
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
-  // IPv4-mapped (::ffff:a.b.c.d) — re-check IPv4
-  const v4Mapped = lower.match(/^::ffff:([0-9.]+)$/);
-  if (v4Mapped) return isBlockedIPv4(v4Mapped[1]!);
+  // IPv4-mapped (::ffff:a.b.c.d or ::ffff:x:y) — re-check IPv4
+  if (lower.startsWith("::ffff:") || lower.startsWith("0:0:0:0:0:ffff:")) {
+    const rest = lower.replace(/^::ffff:|^0:0:0:0:0:ffff:/, "");
+    if (/^[0-9.]+$/.test(rest)) {
+      return isBlockedIPv4(rest);
+    }
+    const hexParts = rest.split(":");
+    if (hexParts.length === 2) {
+      const p1 = Number.parseInt(hexParts[0]!, 16);
+      const p2 = Number.parseInt(hexParts[1]!, 16);
+      if (!Number.isNaN(p1) && !Number.isNaN(p2)) {
+        const ipInt = ((p1 << 16) >>> 0) + (p2 >>> 0);
+        for (const [lo, hi] of IPV4_BLOCKED_RANGES) {
+          if (ipInt >= lo && ipInt <= hi) return true;
+        }
+      }
+    }
+  }
   return false;
 }
 
@@ -95,7 +110,12 @@ export async function assertSafeUrl(url: string): Promise<URL> {
     throw new SSRFBlockedError(`scheme ${parsed.protocol} not allowed`);
   }
 
-  const host = parsed.hostname.toLowerCase();
+  // If the hostname is enclosed in brackets (e.g. [::1]), strip them.
+  let host = parsed.hostname.toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) {
+    host = host.slice(1, -1);
+  }
+
   if (!host) throw new SSRFBlockedError("missing hostname");
   if (BLOCKED_HOSTNAMES.has(host)) {
     throw new SSRFBlockedError(`hostname ${host} is blocked`);

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { authService } from "@/modules/auth/services/auth.service";
 import { db } from "@/lib/db";
 
@@ -21,12 +21,12 @@ describe("Authentication Integration Tests", () => {
         password: "Password123!",
       });
 
-      expect(result.user).toBeDefined();
-      expect(result.user.email).toBe(testEmail);
-      expect(result.user.name).toBe("Test User");
-      expect(result.user.role).toBe("USER");
+      expect(result).toBeDefined();
+      expect(result.email).toBe(testEmail);
+      expect(result.name).toBe("Test User");
+      expect(result.role).toBe("USER");
       
-      testUserId = result.user.id;
+      testUserId = result.id;
 
       // Verify profile and subscription were created
       const profile = await db.profile.findUnique({
@@ -65,22 +65,29 @@ describe("Authentication Integration Tests", () => {
 
   describe("Email Verification", () => {
     it("should generate verification token", async () => {
-      const user = await db.user.findUnique({
-        where: { email: testEmail },
-      });
+      await expect(
+        authService.sendVerificationEmail(testEmail, "Test User")
+      ).resolves.not.toThrow();
 
-      const token = await authService.generateVerificationToken(testEmail);
-      expect(token).toBeDefined();
-      expect(typeof token).toBe("string");
-      expect(token.length).toBeGreaterThan(20);
+      const tokenRecord = await db.verificationToken.findFirst({
+        where: { identifier: testEmail },
+      });
+      expect(tokenRecord).toBeDefined();
+      expect(tokenRecord?.token).toContain("verify_");
     });
   });
 
   describe("Password Reset", () => {
     it("should generate password reset token", async () => {
-      const token = await authService.generateResetToken(testEmail);
-      expect(token).toBeDefined();
-      expect(typeof token).toBe("string");
+      await expect(
+        authService.sendPasswordResetEmail(testEmail)
+      ).resolves.not.toThrow();
+
+      const tokenRecord = await db.verificationToken.findFirst({
+        where: { identifier: testEmail },
+      });
+      expect(tokenRecord).toBeDefined();
+      expect(tokenRecord?.token).toContain("reset_");
     });
   });
 });

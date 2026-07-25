@@ -15,6 +15,7 @@ if (process.env.NODE_ENV === "production" && !rawKey) {
 // Real calls will fail at request time with a clear 401 from OpenAI.
 export const openai = new OpenAI({
   apiKey: rawKey ?? "sk-placeholder-not-for-production",
+  dangerouslyAllowBrowser: true,
 });
 
 export const AI_MODELS = {

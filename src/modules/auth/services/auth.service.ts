@@ -12,6 +12,10 @@ export class AuthService {
       throw new Error("An account with this email already exists");
     }
 
+    if (!data.password || data.password.length < 8) {
+      throw new Error("Password must be at least 8 characters long");
+    }
+
     const user = await authRepository.createUser(data);
 
     // Send email verification (non-blocking)
