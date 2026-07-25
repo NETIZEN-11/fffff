@@ -16,8 +16,8 @@ const envSchema = z.object({
 
   // Auth.js
   AUTH_SECRET: z.string().min(32, "AUTH_SECRET must be at least 32 characters"),
-  AUTH_URL: z.string().url(),
-  IMPERSONATION_SECRET: z.string().min(32, "IMPERSONATION_SECRET must be at least 32 characters"),
+  AUTH_URL: z.string().url().default("http://localhost:3000"),
+  IMPERSONATION_SECRET: z.string().min(32, "IMPERSONATION_SECRET must be at least 32 characters").default("default-impersonation-secret-32-chars-min!!"),
 
   // OAuth (optional)
   AUTH_GOOGLE_ID: z.string().optional(),
@@ -41,13 +41,13 @@ const envSchema = z.object({
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().startsWith("pk_"),
   STRIPE_SECRET_KEY: z.string().startsWith("sk_"),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith("whsec_"),
-  WEBHOOK_RETRY_SECRET: z.string().min(32, "Webhook retry secret must be at least 32 characters"),
+  WEBHOOK_RETRY_SECRET: z.string().min(32, "Webhook retry secret must be at least 32 characters").default("webhook-retry-secret-32-chars-min!!"),
   STRIPE_PRO_PRICE_ID: z.string().startsWith("price_"),
   STRIPE_TEAM_PRICE_ID: z.string().startsWith("price_"),
 
   // Resend
   RESEND_API_KEY: z.string().startsWith("re_"),
-  RESEND_FROM_EMAIL: z.string().email(),
+  RESEND_FROM_EMAIL: z.string().email().default("noreply@resumerank.ai"),
   RESEND_FROM_NAME: z.string().default("ResumeRank AI"),
 
   // Inngest
