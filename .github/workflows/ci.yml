@@ -90,6 +90,8 @@ jobs:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test"
       DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/test"
       AUTH_SECRET: "ci-test-secret-32-chars-minimum!!"
+      IMPERSONATION_SECRET: "impersonation-secret-32-chars-min!!"
+      WEBHOOK_RETRY_SECRET: "webhook-retry-secret-32-chars-min!!"
       NEXT_PUBLIC_APP_URL: "http://localhost:3000"
       NEXT_PUBLIC_SUPABASE_URL: "https://placeholder.supabase.co"
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "placeholder"
