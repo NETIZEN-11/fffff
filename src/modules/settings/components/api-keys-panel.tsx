@@ -257,7 +257,7 @@ export function ApiKeysPanel() {
                   </p>
                 </div>
                 <p className="text-xs text-yellow-800 dark:text-yellow-300">
-                  You won't be able to see this key again. Store it somewhere safe.
+                  You won&apos;t be able to see this key again. Store it somewhere safe.
                 </p>
               </div>
 
@@ -325,7 +325,7 @@ export function ApiKeysPanel() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete API Key?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "<strong>{keyToDelete?.name}</strong>"? Any
+              Are you sure you want to delete &quot;<strong>{keyToDelete?.name}</strong>&quot;? Any
               applications using this key will lose access immediately. This action cannot be
               undone.
             </AlertDialogDescription>

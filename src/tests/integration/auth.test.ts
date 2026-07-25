@@ -84,7 +84,7 @@ describe("Authentication Integration Tests", () => {
       ).resolves.not.toThrow();
 
       const tokenRecord = await db.verificationToken.findFirst({
-        where: { identifier: testEmail },
+        where: { identifier: testEmail, token: { startsWith: "reset_" } },
       });
       expect(tokenRecord).toBeDefined();
       expect(tokenRecord?.token).toContain("reset_");

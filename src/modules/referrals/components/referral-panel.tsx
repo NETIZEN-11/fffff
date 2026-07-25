@@ -219,7 +219,7 @@ export function ReferralPanel() {
                 <strong className="text-foreground">{referralData.referrerBonus} bonus analyses</strong>{" "}
                 for each successful referral
               </li>
-              <li>There's no limit to how many people you can refer!</li>
+              <li>There&apos;s no limit to how many people you can refer!</li>
             </ol>
           </div>
         </CardContent>
@@ -236,7 +236,7 @@ export function ReferralPanel() {
             <li>Mention how ResumeRank AI helped improve your resume ATS score</li>
             <li>Send personal invites to friends who are actively job hunting</li>
             <li>
-              Both you and your friend get bonus analyses - it's a win-win!
+              Both you and your friend get bonus analyses - it&apos;s a win-win!
             </li>
           </ul>
         </CardContent>

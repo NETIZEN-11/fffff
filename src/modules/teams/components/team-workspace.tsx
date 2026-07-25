@@ -8,6 +8,7 @@ import { Button } from "@/shared/components/ui/button";
 import { Badge } from "@/shared/components/ui/badge";
 import { apiFetch } from "@/shared/hooks/use-api";
 import { formatDistanceToNow } from "date-fns";
+import Link from "next/link";
 
 type Team = {
   id: string;
@@ -263,10 +264,10 @@ export function TeamWorkspace() {
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Shared Analyses</CardTitle>
             <Button variant="ghost" size="sm" asChild>
-              <a href="/history">
+              <Link href="/history">
                 View all
                 <ArrowRight className="h-3.5 w-3.5 ml-1" />
-              </a>
+              </Link>
             </Button>
           </div>
         </CardHeader>
@@ -278,7 +279,7 @@ export function TeamWorkspace() {
           ) : analyses.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-sm text-muted-foreground">
-                No analyses yet. Team members' analyses will appear here.
+                No analyses yet. Team members&apos; analyses will appear here.
               </p>
             </div>
           ) : (
